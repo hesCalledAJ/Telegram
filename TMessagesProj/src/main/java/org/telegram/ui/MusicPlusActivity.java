@@ -31,6 +31,7 @@ import org.telegram.messenger.FileLoader;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.MediaController;
 import org.telegram.messenger.MessageObject;
+import org.telegram.messenger.MusicPlusLibrary;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
 import org.telegram.tgnet.TLRPC;
@@ -38,7 +39,9 @@ import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.AudioPlayerAlert;
 import org.telegram.ui.Components.BackupImageView;
+import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.CubicBezierInterpolator;
+import org.telegram.ui.Components.ItemOptions;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.PlayPauseDrawable;
 import org.telegram.ui.Components.RecyclerListView;
@@ -74,6 +77,7 @@ public class MusicPlusActivity extends BaseFragment implements NotificationCente
     private SegmentedPill pill;
     private FrameLayout stage;
     private final View[] pages = new View[3];
+    private MusicPlusLibraryPage libraryPage;
     private RecyclerListView queueList;
     private QueueAdapter queueAdapter;
     private LinearLayoutManager queueLayoutManager;
@@ -104,14 +108,37 @@ public class MusicPlusActivity extends BaseFragment implements NotificationCente
         super.onFragmentDestroy();
     }
 
+    @Override
+    public Theme.ResourcesProvider getResourceProvider() {
+        return resourceProvider;
+    }
+
+    /** Called by the library page when it changes depth so back handling stays current. */
+    void onLibraryStateChanged() {
+        if (queueAdapter != null) {
+            queueAdapter.notifyDataSetChanged();
+        }
+    }
+
+    @Override
+    public boolean onBackPressed(boolean invoked) {
+        if (currentPage == PAGE_LIBRARY && libraryPage != null && libraryPage.canGoBack()) {
+            if (invoked) {
+                libraryPage.goBack();
+            }
+            return false;
+        }
+        return super.onBackPressed(invoked);
+    }
+
     /* colors, resolved like the plugin does (theme keys, never hard-coded) */
 
-    private int cBg() { return getThemedColor(Theme.key_windowBackgroundGray); }
-    private int cItem() { return getThemedColor(Theme.key_windowBackgroundWhite); }
-    private int cText() { return getThemedColor(Theme.key_windowBackgroundWhiteBlackText); }
-    private int cSub() { return getThemedColor(Theme.key_windowBackgroundWhiteGrayText2); }
-    private int cAccent() { return getThemedColor(Theme.key_player_buttonActive); }
-    private int cSel() { return ColorUtils.blendARGB(cItem(), cAccent(), 0.18f); }
+    int cBg() { return getThemedColor(Theme.key_windowBackgroundGray); }
+    int cItem() { return getThemedColor(Theme.key_windowBackgroundWhite); }
+    int cText() { return getThemedColor(Theme.key_windowBackgroundWhiteBlackText); }
+    int cSub() { return getThemedColor(Theme.key_windowBackgroundWhiteGrayText2); }
+    int cAccent() { return getThemedColor(Theme.key_player_buttonActive); }
+    int cSel() { return ColorUtils.blendARGB(cItem(), cAccent(), 0.18f); }
 
     @Override
     public View createView(Context context) {
@@ -135,7 +162,7 @@ public class MusicPlusActivity extends BaseFragment implements NotificationCente
         stage.setClipChildren(false);
         root.addView(stage, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f, 10, 0, 10, 0));
 
-        pages[PAGE_LIBRARY] = createScaffoldPage(context, getString(R.string.MusicPlusEmptyLibrary));
+        pages[PAGE_LIBRARY] = libraryPage = new MusicPlusLibraryPage(context, this);
         pages[PAGE_QUEUE] = createQueuePage(context);
         pages[PAGE_LYRICS] = createScaffoldPage(context, getString(R.string.MusicPlusEmptyLyrics));
         for (View page : pages) {
@@ -164,6 +191,9 @@ public class MusicPlusActivity extends BaseFragment implements NotificationCente
         super.onResume();
         applyInsets();
         updateQueue();
+        if (libraryPage != null) {
+            libraryPage.refresh();
+        }
     }
 
     /* header: [spacer 88] [overline + title centered] [search, more] */
@@ -198,9 +228,31 @@ public class MusicPlusActivity extends BaseFragment implements NotificationCente
         right.setOrientation(LinearLayout.HORIZONTAL);
         right.setGravity(Gravity.CENTER_VERTICAL);
         right.addView(createHeaderButton(context, R.drawable.msg_search, v -> { /* TODO: library search */ }), LayoutHelper.createLinear(48, 56));
-        right.addView(createHeaderButton(context, R.drawable.ic_ab_other, v -> { /* TODO: queue menu */ }), LayoutHelper.createLinear(48, 56));
+        right.addView(createHeaderButton(context, R.drawable.ic_ab_other, this::showQueueMenu), LayoutHelper.createLinear(48, 56));
         header.addView(right, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.MATCH_PARENT, Gravity.END, 0, 0, 8, 0));
         return header;
+    }
+
+    private void showQueueMenu(View anchor) {
+        if (getParentActivity() == null) {
+            return;
+        }
+        final ItemOptions options = ItemOptions.makeOptions(this, anchor);
+        options.add(R.drawable.msg_download, getString(R.string.MusicPlusSaveQueue), this::saveQueueAsPlaylist);
+        options.show();
+    }
+
+    private void saveQueueAsPlaylist() {
+        final ArrayList<MessageObject> queue = new ArrayList<>(MediaController.getInstance().getPlaylist());
+        if (queue.isEmpty()) {
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(R.string.MusicPlusQueueEmpty)).show();
+            return;
+        }
+        libraryPage.promptName(getString(R.string.MusicPlusSaveQueue), getString(R.string.MusicPlusQueue), name -> {
+            MusicPlusLibrary.getInstance().createPlaylist(name, queue);
+            libraryPage.refresh();
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(R.string.MusicPlusQueueSaved)).show();
+        });
     }
 
     private View createHeaderButton(Context context, int icon, View.OnClickListener listener) {
@@ -284,6 +336,9 @@ public class MusicPlusActivity extends BaseFragment implements NotificationCente
 
     @Override
     public void didReceivedNotification(int id, int account, Object... args) {
+        if (id == NotificationCenter.messagePlayingDidStart) {
+            MusicPlusLibrary.getInstance().saveLastQueue(MediaController.getInstance().getPlaylist());
+        }
         if (id == NotificationCenter.messagePlayingDidStart || id == NotificationCenter.messagePlayingDidReset
             || id == NotificationCenter.messagePlayingPlayStateChanged || id == NotificationCenter.messagePlayingGoingToStop) {
             updateQueue();
@@ -299,6 +354,8 @@ public class MusicPlusActivity extends BaseFragment implements NotificationCente
     public void onParentScrollToTop() {
         if (queueList != null && currentPage == PAGE_QUEUE) {
             queueList.smoothScrollToPosition(0);
+        } else if (libraryPage != null && currentPage == PAGE_LIBRARY) {
+            libraryPage.scrollToTop();
         }
     }
 
