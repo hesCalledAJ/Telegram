@@ -10589,6 +10589,14 @@
 
     <string name="MainTabsContacts">Contacts</string>
     <string name="MainTabsCalls">Calls</string>
+    <string name="MainTabsMusic">Music</string>
+    <string name="MusicPlusLibrary">Library</string>
+    <string name="MusicPlusQueue">Queue</string>
+    <string name="MusicPlusLyrics">Lyrics</string>
+    <string name="MusicPlusTracks">%1$d tracks</string>
+    <string name="MusicPlusNothingPlaying">Nothing playing</string>
+    <string name="MusicPlusEmptyLibrary">Your music library will appear here</string>
+    <string name="MusicPlusEmptyLyrics">Lyrics for the current track will appear here</string>
     <string name="MainTabsChats">Chats</string>
     <string name="MainTabsProfile">Profile</string>
     <string name="MainTabsSettings">Settings</string>
